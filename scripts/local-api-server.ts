@@ -53,6 +53,10 @@ import feedStatsHandler from '../api/feed/stats';
 import feedAccountsHandler from '../api/feed/accounts';
 import arbitrageHandler from '../api/markets/arbitrage';
 import moversHandler from '../api/markets/movers';
+import marketsSearchHandler from '../api/markets/search';
+import marketsLookupHandler from '../api/markets/lookup';
+import marketsHistoryHandler from '../api/markets/history';
+import marketsResolutionContextHandler from '../api/markets/resolution-context';
 
 type Handler = (req: any, res: any) => Promise<void> | void;
 type QueryValue = string | string[];
@@ -69,6 +73,10 @@ const ROUTES = new Map<string, Handler>([
   ['/api/feed/accounts', feedAccountsHandler],
   ['/api/markets/arbitrage', arbitrageHandler],
   ['/api/markets/movers', moversHandler],
+  ['/api/markets/search', marketsSearchHandler],
+  ['/api/markets/lookup', marketsLookupHandler],
+  ['/api/markets/history', marketsHistoryHandler],
+  ['/api/markets/resolution-context', marketsResolutionContextHandler],
 ]);
 
 function buildQuery(url: URL): Record<string, QueryValue> {

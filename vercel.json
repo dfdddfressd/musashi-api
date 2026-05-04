@@ -18,6 +18,22 @@
       "destination": "/api/markets/movers.ts"
     },
     {
+      "source": "/api/markets/search",
+      "destination": "/api/markets/search.ts"
+    },
+    {
+      "source": "/api/markets/lookup",
+      "destination": "/api/markets/lookup.ts"
+    },
+    {
+      "source": "/api/markets/history",
+      "destination": "/api/markets/history.ts"
+    },
+    {
+      "source": "/api/markets/resolution-context",
+      "destination": "/api/markets/resolution-context.ts"
+    },
+    {
       "source": "/api/health",
       "destination": "/api/health.ts"
     },
