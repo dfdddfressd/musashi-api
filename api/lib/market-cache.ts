@@ -15,6 +15,12 @@ import { FreshnessMetadata, SourceStatus } from './types';
 let cachedMarkets: Market[] = [];
 let cacheTimestamp = 0;
 const CACHE_TTL_MS = (parseInt(process.env.MARKET_CACHE_TTL_SECONDS || '20', 10)) * 1000;
+// Serve stale results briefly while refreshing in background to reduce
+// cold-start and expiry stampedes.
+const STALE_WHILE_REVALIDATE_MS =
+  (parseInt(process.env.MARKET_CACHE_SWR_SECONDS || '90', 10)) * 1000;
+// Single-flight guard for upstream refreshes.
+let inFlightFetch: Promise<Market[]> | null = null;
 
 // Stage 0: Per-source tracking for freshness metadata
 let polyTimestamp = 0;
@@ -28,15 +34,17 @@ let kalshiError: string | null = null;
 // Default: 15 seconds (configurable via ARBITRAGE_CACHE_TTL_SECONDS env var)
 let cachedArbitrage: ArbitrageOpportunity[] = [];
 let arbCacheTimestamp = 0;
+// Tracks which market snapshot arbitrage was computed from.
+let arbCacheMarketsStamp = -1;
 const ARB_CACHE_TTL_MS = (parseInt(process.env.ARBITRAGE_CACHE_TTL_SECONDS || '15', 10)) * 1000;
 
-const POLYMARKET_TARGET_COUNT = parsePositiveInt(process.env.MUSASHI_POLYMARKET_TARGET_COUNT, 1200);
-const POLYMARKET_MAX_PAGES = parsePositiveInt(process.env.MUSASHI_POLYMARKET_MAX_PAGES, 20);
-const KALSHI_TARGET_COUNT = parsePositiveInt(process.env.MUSASHI_KALSHI_TARGET_COUNT, 1000);
-const KALSHI_MAX_PAGES = parsePositiveInt(process.env.MUSASHI_KALSHI_MAX_PAGES, 20);
+const POLYMARKET_TARGET_COUNT = parsePositiveInt(process.env.MUSASHI_POLYMARKET_TARGET_COUNT, 300);
+const POLYMARKET_MAX_PAGES = parsePositiveInt(process.env.MUSASHI_POLYMARKET_MAX_PAGES, 6);
+const KALSHI_TARGET_COUNT = parsePositiveInt(process.env.MUSASHI_KALSHI_TARGET_COUNT, 250);
+const KALSHI_MAX_PAGES = parsePositiveInt(process.env.MUSASHI_KALSHI_MAX_PAGES, 6);
 
-// Stage 0 Session 2: Per-source timeout (5 seconds)
-const SOURCE_TIMEOUT_MS = 5000;
+// Per-source timeout (increased from 5s to reduce transient 503s)
+const SOURCE_TIMEOUT_MS = parsePositiveInt(process.env.MUSASHI_SOURCE_TIMEOUT_MS, 15000);
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? '', 10);
@@ -77,64 +85,93 @@ function withTimeout<T>(
  */
 export async function getMarkets(): Promise<Market[]> {
   const now = Date.now();
+  const ageMs = now - cacheTimestamp;
 
   // Return cached if fresh
-  if (cachedMarkets.length > 0 && (now - cacheTimestamp) < CACHE_TTL_MS) {
-    console.log(`[Market Cache] Using cached ${cachedMarkets.length} markets (TTL: ${CACHE_TTL_MS}ms, age: ${now - cacheTimestamp}ms)`);
+  if (cachedMarkets.length > 0 && ageMs < CACHE_TTL_MS) {
+    console.log(`[Market Cache] Using cached ${cachedMarkets.length} markets (TTL: ${CACHE_TTL_MS}ms, age: ${ageMs}ms)`);
     return cachedMarkets;
   }
 
-  // Fetch fresh markets
-  console.log(`[Market Cache] Fetching fresh markets... (TTL: ${CACHE_TTL_MS}ms)`);
-
-  try {
-    // Stage 0 Session 2: Wrap each source with 5-second timeout
-    const [polyResult, kalshiResult] = await Promise.allSettled([
-      withTimeout(
-        fetchPolymarkets(POLYMARKET_TARGET_COUNT, POLYMARKET_MAX_PAGES),
-        SOURCE_TIMEOUT_MS,
-        'Polymarket'
-      ),
-      withTimeout(
-        fetchKalshiMarkets(KALSHI_TARGET_COUNT, KALSHI_MAX_PAGES),
-        SOURCE_TIMEOUT_MS,
-        'Kalshi'
-      ),
-    ]);
-
-    // Stage 0: Track Polymarket fetch
-    if (polyResult.status === 'fulfilled') {
-      polyTimestamp = now;
-      polyMarketCount = polyResult.value.length;
-      polyError = null;
-    } else {
-      polyError = polyResult.reason?.message || 'Failed to fetch Polymarket markets';
-      console.error('[Market Cache] Polymarket fetch failed:', polyError);
+  // Serve stale while a background refresh is kicked off.
+  if (cachedMarkets.length > 0 && ageMs < CACHE_TTL_MS + STALE_WHILE_REVALIDATE_MS) {
+    if (!inFlightFetch) {
+      console.log(`[Market Cache] SWR stale hit (age: ${ageMs}ms), refreshing in background`);
+      void refreshMarkets();
     }
-
-    // Stage 0: Track Kalshi fetch
-    if (kalshiResult.status === 'fulfilled') {
-      kalshiTimestamp = now;
-      kalshiMarketCount = kalshiResult.value.length;
-      kalshiError = null;
-    } else {
-      kalshiError = kalshiResult.reason?.message || 'Failed to fetch Kalshi markets';
-      console.error('[Market Cache] Kalshi fetch failed:', kalshiError);
-    }
-
-    const polyMarkets = polyResult.status === 'fulfilled' ? polyResult.value : [];
-    const kalshiMarkets = kalshiResult.status === 'fulfilled' ? kalshiResult.value : [];
-
-    cachedMarkets = [...polyMarkets, ...kalshiMarkets];
-    cacheTimestamp = now;
-
-    console.log(`[Market Cache] Cached ${cachedMarkets.length} markets (${polyMarkets.length} Poly + ${kalshiMarkets.length} Kalshi)`);
-    return cachedMarkets;
-  } catch (error) {
-    console.error('[Market Cache] Failed to fetch markets:', error);
-    // Return stale cache if available
     return cachedMarkets;
   }
+
+  // If an upstream refresh is already in progress, share it.
+  if (inFlightFetch) {
+    return inFlightFetch;
+  }
+
+  // Hard miss: refresh now.
+  return refreshMarkets();
+}
+
+function refreshMarkets(): Promise<Market[]> {
+  if (inFlightFetch) return inFlightFetch;
+  inFlightFetch = (async () => {
+    const now = Date.now();
+    try {
+      const [polyResult, kalshiResult] = await Promise.allSettled([
+        withTimeout(
+          fetchPolymarkets(POLYMARKET_TARGET_COUNT, POLYMARKET_MAX_PAGES),
+          SOURCE_TIMEOUT_MS,
+          'Polymarket'
+        ),
+        withTimeout(
+          fetchKalshiMarkets(KALSHI_TARGET_COUNT, KALSHI_MAX_PAGES),
+          SOURCE_TIMEOUT_MS,
+          'Kalshi'
+        ),
+      ]);
+
+      // Stage 0: Track Polymarket fetch
+      if (polyResult.status === 'fulfilled') {
+        polyTimestamp = now;
+        polyMarketCount = polyResult.value.length;
+        polyError = null;
+      } else {
+        polyError = polyResult.reason?.message || 'Failed to fetch Polymarket markets';
+        console.error('[Market Cache] Polymarket fetch failed:', polyError);
+      }
+
+      // Stage 0: Track Kalshi fetch
+      if (kalshiResult.status === 'fulfilled') {
+        kalshiTimestamp = now;
+        kalshiMarketCount = kalshiResult.value.length;
+        kalshiError = null;
+      } else {
+        kalshiError = kalshiResult.reason?.message || 'Failed to fetch Kalshi markets';
+        console.error('[Market Cache] Kalshi fetch failed:', kalshiError);
+      }
+
+      const polyMarkets = polyResult.status === 'fulfilled' ? polyResult.value : [];
+      const kalshiMarkets = kalshiResult.status === 'fulfilled' ? kalshiResult.value : [];
+      const merged = [...polyMarkets, ...kalshiMarkets];
+
+      // Only overwrite if at least one source returned markets.
+      if (merged.length > 0) {
+        cachedMarkets = merged;
+        cacheTimestamp = now;
+      } else {
+        console.warn('[Market Cache] Both sources empty/failed; preserving last known cache');
+      }
+
+      console.log(`[Market Cache] Cached ${cachedMarkets.length} markets (${polyMarkets.length} Poly + ${kalshiMarkets.length} Kalshi)`);
+      return cachedMarkets;
+    } catch (error) {
+      console.error('[Market Cache] Failed to fetch markets:', error);
+      // Return stale cache if available
+      return cachedMarkets;
+    } finally {
+      inFlightFetch = null;
+    }
+  })();
+  return inFlightFetch;
 }
 
 /**
@@ -195,12 +232,15 @@ export async function getArbitrage(minSpread: number = 0.03): Promise<ArbitrageO
   const markets = await getMarkets();
   const now = Date.now();
 
-  // Recompute if cache is stale
-  if (cachedArbitrage.length === 0 || (now - arbCacheTimestamp) >= ARB_CACHE_TTL_MS) {
+  // Recompute when TTL expired or when the underlying market snapshot changed.
+  const ttlStale = arbCacheMarketsStamp < 0 || (now - arbCacheTimestamp) >= ARB_CACHE_TTL_MS;
+  const marketsMoved = arbCacheMarketsStamp !== cacheTimestamp;
+  if (ttlStale || marketsMoved) {
     console.log('[Arbitrage Cache] Computing arbitrage opportunities...');
     // Cache with low threshold (0.01) so we can filter client-side
     cachedArbitrage = detectArbitrage(markets, 0.01);
     arbCacheTimestamp = now;
+    arbCacheMarketsStamp = cacheTimestamp;
     console.log(`[Arbitrage Cache] Cached ${cachedArbitrage.length} opportunities (minSpread: 0.01, TTL: ${ARB_CACHE_TTL_MS}ms)`);
   }
 
