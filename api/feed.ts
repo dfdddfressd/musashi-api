@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import type { AnalyzedTweet, FeedResponse, AccountCategory } from '../src/types/feed';
 import { batchGetFromKV, setFeedCache, getFeedCache, getFeedCacheTimestamp } from './lib/cache-helper';
 import { kv } from './lib/vercel-kv';
+import { trackApiRequest } from './lib/analytics';
 
 // ─── KV Storage Keys ───────────────────────────────────────────────────────
 
@@ -54,6 +55,11 @@ export default async function handler(
   res: VercelResponse
 ): Promise<void> {
   const startTime = Date.now();
+  let responseStatus = 500;
+  const send = (statusCode: number, payload: unknown): void => {
+    responseStatus = statusCode;
+    res.status(statusCode).json(payload);
+  };
 
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -69,7 +75,7 @@ export default async function handler(
   // Only allow GET
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET, OPTIONS');
-    res.status(405).json({
+    send(405, {
       success: false,
       error: 'Method not allowed. Use GET.',
     });
@@ -89,7 +95,7 @@ export default async function handler(
 
     // Validate parameters
     if (limit < 1 || limit > 100) {
-      res.status(400).json({
+      send(400, {
         success: false,
         error: 'Limit must be between 1 and 100.',
       });
@@ -97,7 +103,7 @@ export default async function handler(
     }
 
     if (category && !isValidCategory(category)) {
-      res.status(400).json({
+      send(400, {
         success: false,
         error: `Invalid category. Must be one of: politics, economics, crypto, technology, geopolitics, sports, breaking_news, finance`,
       });
@@ -105,7 +111,7 @@ export default async function handler(
     }
 
     if (minUrgency && !isValidUrgency(minUrgency)) {
-      res.status(400).json({
+      send(400, {
         success: false,
         error: `Invalid minUrgency. Must be one of: low, medium, high, critical`,
       });
@@ -115,7 +121,7 @@ export default async function handler(
     if (since) {
       const sinceDate = new Date(since);
       if (Number.isNaN(sinceDate.getTime())) {
-        res.status(400).json({
+        send(400, {
           success: false,
           error: 'Invalid "since" timestamp. Use ISO 8601 format.',
         });
@@ -150,7 +156,7 @@ export default async function handler(
 
       // Cache for 30 seconds
       res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate');
-      res.status(200).json(response);
+      send(200, response);
       return;
     }
 
@@ -162,7 +168,7 @@ export default async function handler(
     if (cursor) {
       const cursorIndex = feedIndex.indexOf(cursor);
       if (cursorIndex === -1) {
-        res.status(410).json({
+        send(410, {
           success: false,
           error: 'Cursor expired or invalid. Restart pagination from the beginning.',
         });
@@ -224,7 +230,7 @@ export default async function handler(
 
     // Cache for 60 seconds at edge with stale-while-revalidate
     res.setHeader('Cache-Control', FEED_CACHE_CONTROL);
-    res.status(200).json(response);
+    send(200, response);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('[Feed API] Error:', errorMessage);
@@ -259,14 +265,14 @@ export default async function handler(
 
         console.log(`[Feed API] Serving cached feed (age: ${fallbackResponse.data.metadata.cache_age_seconds}s)`);
         res.setHeader('Cache-Control', FEED_CACHE_CONTROL);
-        res.status(200).json(fallbackResponse);
+        send(200, fallbackResponse);
         return;
       }
     }
 
     const sanitized = getSanitizedFeedError(errorMessage);
     res.setHeader('Cache-Control', FEED_CACHE_CONTROL);
-    res.status(isQuotaError ? 503 : sanitized.status).json({
+    send(isQuotaError ? 503 : sanitized.status, {
       success: false,
       error: isQuotaError
         ? 'Service temporarily unavailable due to quota limits. No cached data available.'
@@ -274,6 +280,14 @@ export default async function handler(
       ...(sanitized.note && {
         note: sanitized.note,
       }),
+    });
+  } finally {
+    await trackApiRequest({
+      req,
+      endpoint: '/api/feed',
+      method: req.method ?? 'GET',
+      statusCode: responseStatus,
+      startTime,
     });
   }
 }

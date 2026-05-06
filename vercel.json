@@ -48,12 +48,36 @@
     {
       "source": "/api/feed/accounts",
       "destination": "/api/feed/accounts.ts"
+    },
+    {
+      "source": "/api/internal/trades/report",
+      "destination": "/api/internal/trades/report.ts"
+    },
+    {
+      "source": "/api/internal/analytics/summary",
+      "destination": "/api/internal/analytics/summary.ts"
+    },
+    {
+      "source": "/api/internal/analytics/timeseries",
+      "destination": "/api/internal/analytics/timeseries.ts"
+    },
+    {
+      "source": "/api/internal/analytics/top-keys",
+      "destination": "/api/internal/analytics/top-keys.ts"
+    },
+    {
+      "source": "/api/cron/rollup-daily-metrics",
+      "destination": "/api/cron/rollup-daily-metrics.ts"
     }
   ],
   "crons": [
     {
       "path": "/api/cron/collect-tweets",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/rollup-daily-metrics",
+      "schedule": "5 0 * * *"
     }
   ],
   "headers": [

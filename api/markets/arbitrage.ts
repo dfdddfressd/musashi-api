@@ -1,10 +1,18 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getMarkets, getArbitrage, getMarketMetadata } from '../lib/market-cache';
+import { trackApiRequest } from '../lib/analytics';
 
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ): Promise<void> {
+  const startTime = Date.now();
+  let responseStatus = 500;
+  const send = (statusCode: number, payload: unknown): void => {
+    responseStatus = statusCode;
+    res.status(statusCode).json(payload);
+  };
+
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -26,8 +34,6 @@ export default async function handler(
     return;
   }
 
-  const startTime = Date.now();
-
   try {
     // Parse query parameters
     const {
@@ -43,7 +49,7 @@ export default async function handler(
 
     // Validate parameters
     if (isNaN(minSpreadNum) || minSpreadNum < 0 || minSpreadNum > 1) {
-      res.status(400).json({
+      send(400, {
         success: false,
         error: 'Invalid minSpread. Must be between 0 and 1.',
       });
@@ -51,7 +57,7 @@ export default async function handler(
     }
 
     if (isNaN(minConfidenceNum) || minConfidenceNum < 0 || minConfidenceNum > 1) {
-      res.status(400).json({
+      send(400, {
         success: false,
         error: 'Invalid minConfidence. Must be between 0 and 1.',
       });
@@ -59,7 +65,7 @@ export default async function handler(
     }
 
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
-      res.status(400).json({
+      send(400, {
         success: false,
         error: 'Invalid limit. Must be between 1 and 100.',
       });
@@ -70,7 +76,7 @@ export default async function handler(
     const markets = await getMarkets();
 
     if (markets.length === 0) {
-      res.status(503).json({
+      send(503, {
         success: false,
         error: 'No markets available. Service temporarily unavailable.',
       });
@@ -116,12 +122,20 @@ export default async function handler(
       },
     };
 
-    res.status(200).json(response);
+    send(200, response);
   } catch (error) {
     console.error('[Arbitrage API] Error:', error);
-    res.status(500).json({
+    send(500, {
       success: false,
       error: error instanceof Error ? error.message : 'Internal server error',
+    });
+  } finally {
+    await trackApiRequest({
+      req,
+      endpoint: '/api/markets/arbitrage',
+      method: req.method ?? 'GET',
+      statusCode: responseStatus,
+      startTime,
     });
   }
 }

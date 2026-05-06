@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Market } from '../../src/types/market';
 import { getMarkets, getMarketMetadata } from '../lib/market-cache';
 import { kv, listKvKeys, setKvWithTtl } from '../lib/vercel-kv';
+import { trackApiRequest } from '../lib/analytics';
 
 /**
  * Vercel KV-based price tracking for persistent movers detection
@@ -192,6 +193,13 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ): Promise<void> {
+  const startTime = Date.now();
+  let responseStatus = 500;
+  const send = (statusCode: number, payload: unknown): void => {
+    responseStatus = statusCode;
+    res.status(statusCode).json(payload);
+  };
+
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -213,8 +221,6 @@ export default async function handler(
     return;
   }
 
-  const startTime = Date.now();
-
   try {
     // Parse query parameters
     const {
@@ -228,7 +234,7 @@ export default async function handler(
 
     // Validate parameters
     if (isNaN(minChangeNum) || minChangeNum < 0 || minChangeNum > 1) {
-      res.status(400).json({
+      send(400, {
         success: false,
         error: 'Invalid minChange. Must be between 0 and 1.',
       });
@@ -236,7 +242,7 @@ export default async function handler(
     }
 
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
-      res.status(400).json({
+      send(400, {
         success: false,
         error: 'Invalid limit. Must be between 1 and 100.',
       });
@@ -247,7 +253,7 @@ export default async function handler(
     const markets = await getMarkets();
 
     if (markets.length === 0) {
-      res.status(503).json({
+      send(503, {
         success: false,
         error: 'No markets available. Service temporarily unavailable.',
       });
@@ -300,7 +306,7 @@ export default async function handler(
       },
     };
 
-    res.status(200).json(response);
+    send(200, response);
   } catch (error) {
     console.error('[Movers API] Error:', error);
 
@@ -308,12 +314,20 @@ export default async function handler(
     const errorMessage = error instanceof Error ? error.message : 'Internal server error';
     const isKVError = errorMessage.includes('KV') || errorMessage.includes('Redis');
 
-    res.status(500).json({
+    send(500, {
       success: false,
       error: errorMessage,
       ...(isKVError && {
         note: 'Vercel KV storage error. Ensure KV_REST_API_URL and KV_REST_API_TOKEN are set in Vercel environment variables.',
       }),
+    });
+  } finally {
+    await trackApiRequest({
+      req,
+      endpoint: '/api/markets/movers',
+      method: req.method ?? 'GET',
+      statusCode: responseStatus,
+      startTime,
     });
   }
 }

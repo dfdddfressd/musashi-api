@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { KeywordMatcher } from '../src/analysis/keyword-matcher';
 import { generateSignal, TradingSignal } from '../src/analysis/signal-generator';
 import { getMarkets, getArbitrage, getMarketMetadata } from './lib/market-cache';
+import { trackApiRequest, trackSignalGenerated } from './lib/analytics';
 
 function isMalformedJsonError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -24,6 +25,13 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ): Promise<void> {
+  const startTime = Date.now();
+  let responseStatus = 500;
+  const send = (statusCode: number, payload: unknown): void => {
+    responseStatus = statusCode;
+    res.status(statusCode).json(payload);
+  };
+
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -38,7 +46,7 @@ export default async function handler(
   // Only accept POST
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST, OPTIONS');
-    res.status(405).json({
+    send(405, {
       event_id: 'evt_error',
       signal_type: 'user_interest',
       urgency: 'low',
@@ -48,8 +56,6 @@ export default async function handler(
     return;
   }
 
-  const startTime = Date.now();
-
   try {
     const body = req.body as {
       text: string;
@@ -58,7 +64,7 @@ export default async function handler(
     } | null;
 
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      res.status(400).json({
+      send(400, {
         event_id: 'evt_error',
         signal_type: 'user_interest',
         urgency: 'low',
@@ -70,7 +76,7 @@ export default async function handler(
 
     // Validate request
     if (!body.text || typeof body.text !== 'string') {
-      res.status(400).json({
+      send(400, {
         event_id: 'evt_error',
         signal_type: 'user_interest',
         urgency: 'low',
@@ -82,7 +88,7 @@ export default async function handler(
 
     // Validate text length (prevent abuse)
     if (body.text.length > 10000) {
-      res.status(400).json({
+      send(400, {
         event_id: 'evt_error',
         signal_type: 'user_interest',
         urgency: 'low',
@@ -101,7 +107,7 @@ export default async function handler(
       minConfidence < 0 ||
       minConfidence > 1
     ) {
-      res.status(400).json({
+      send(400, {
         event_id: 'evt_error',
         signal_type: 'user_interest',
         urgency: 'low',
@@ -117,7 +123,7 @@ export default async function handler(
       maxResults < 1 ||
       maxResults > 100
     ) {
-      res.status(400).json({
+      send(400, {
         event_id: 'evt_error',
         signal_type: 'user_interest',
         urgency: 'low',
@@ -131,7 +137,7 @@ export default async function handler(
     const markets = await getMarkets();
 
     if (markets.length === 0) {
-      res.status(503).json({
+      send(503, {
         event_id: 'evt_error',
         signal_type: 'user_interest',
         urgency: 'low',
@@ -188,10 +194,17 @@ export default async function handler(
       },
     };
 
-    res.status(200).json(response);
+    send(200, response);
+
+    await trackSignalGenerated({
+      req,
+      marketId: signal.matches[0]?.market.id,
+      matchCount: signal.matches.length,
+      suggestedAction: String(signal.suggested_action),
+    });
   } catch (error) {
     if (isMalformedJsonError(error)) {
-      res.status(400).json({
+      send(400, {
         event_id: 'evt_error',
         signal_type: 'user_interest',
         urgency: 'low',
@@ -202,12 +215,20 @@ export default async function handler(
     }
 
     console.error('[API] Error in analyze-text:', error);
-    res.status(500).json({
+    send(500, {
       event_id: 'evt_error',
       signal_type: 'user_interest',
       urgency: 'low',
       success: false,
       error: error instanceof Error ? error.message : 'Internal server error',
+    });
+  } finally {
+    await trackApiRequest({
+      req,
+      endpoint: '/api/analyze-text',
+      method: req.method ?? 'POST',
+      statusCode: responseStatus,
+      startTime,
     });
   }
 }
