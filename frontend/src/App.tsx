@@ -156,8 +156,13 @@ function App() {
   const apiStatus = healthData.data?.status || 'down';
   const responseTime = healthData.data?.response_time_ms;
   const statusClass = apiStatus === 'healthy' ? 'terminal-positive' : apiStatus === 'degraded' ? 'terminal-warning' : 'terminal-negative';
-  const currentMarkets = (healthData.data?.services?.polymarket?.markets ?? 0)
-    + (healthData.data?.services?.kalshi?.markets ?? 0);
+  const currentMarkets = marketsData.data?.metadata.markets_analyzed ?? 0;
+  const marketSourceCounts = {
+    polymarket: marketsData.data?.metadata.sources.polymarket.market_count ?? 0,
+    kalshi: marketsData.data?.metadata.sources.kalshi.market_count ?? 0,
+  };
+  const hasLiveArbitrageCount = !arbitrageData.error && typeof arbitrageData.data?.count === 'number';
+  const hasLiveSignalCount = !feedStatsData.error && typeof feedStatsData.data?.tweets.last_24h === 'number';
   const usingCachedArbitrage = !arbitrageData.data?.opportunities?.length && !!stickyArbitrage?.length;
   const usingCachedMovers = !moversData.data?.movers?.length && !!stickyMovers?.length;
   const displayedArbitrage = arbitrageData.data?.opportunities?.length
@@ -211,12 +216,12 @@ function App() {
           <div className="terminal-stat">
             <span className="terminal-stat-label">Arbitrage Routes</span>
             <strong className="terminal-stat-value terminal-positive">{cachedArbitrageCount}</strong>
-            <span className="terminal-stat-sub">live scan</span>
+            <span className="terminal-stat-sub">{hasLiveArbitrageCount ? 'live scan' : 'cached snapshot'}</span>
           </div>
           <div className="terminal-stat">
             <span className="terminal-stat-label">Signals Loaded</span>
             <strong className="terminal-stat-value">{cachedSignalCount}</strong>
-            <span className="terminal-stat-sub">matched in last 24h</span>
+            <span className="terminal-stat-sub">{hasLiveSignalCount ? 'matched in last 24h' : 'cached snapshot'}</span>
           </div>
         </section>
 
@@ -226,6 +231,7 @@ function App() {
               data={activeMarkets}
               loading={marketsData.loading}
               error={marketsData.error}
+              sourceCounts={marketSourceCounts}
             />
 
             <div className="grid grid-cols-1 xl:grid-cols-2">

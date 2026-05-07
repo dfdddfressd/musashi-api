@@ -5,6 +5,10 @@ interface MarketsCardProps {
   data: Market[] | null;
   loading: boolean;
   error: string | null;
+  sourceCounts?: {
+    polymarket: number;
+    kalshi: number;
+  };
 }
 
 const formatVolume = (volume: number) => {
@@ -19,7 +23,12 @@ const formatVolume = (volume: number) => {
   return `$${volume.toFixed(0)}`;
 };
 
-export const MarketsCard: React.FC<MarketsCardProps> = ({ data, loading, error }) => {
+export const MarketsCard: React.FC<MarketsCardProps> = ({
+  data,
+  loading,
+  error,
+  sourceCounts,
+}) => {
   if (error) {
     return (
       <section id="terminal-markets" className="card terminal-anchor p-4 border-red-900/60">
@@ -30,8 +39,8 @@ export const MarketsCard: React.FC<MarketsCardProps> = ({ data, loading, error }
   }
 
   const topMarkets = data?.slice(0, 8) || [];
-  const polymarketCount = data?.filter(market => market.platform === 'polymarket').length || 0;
-  const kalshiCount = data?.filter(market => market.platform === 'kalshi').length || 0;
+  const polymarketCount = sourceCounts?.polymarket ?? 0;
+  const kalshiCount = sourceCounts?.kalshi ?? 0;
 
   return (
     <section id="terminal-markets" className="card terminal-anchor">
