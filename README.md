@@ -18,9 +18,20 @@ This repo is the new source of truth for shared functionality. Both `musashi-ext
 
 - `pnpm dev`: run the local API shim on `http://127.0.0.1:3000`
 - `pnpm backend:dev`: run the Supabase-backed auxiliary backend from [`server/api-server.mjs`](../musashi-api/server/api-server.mjs)
+- `pnpm test`: run the offline-safe unit and integration tests with Node's built-in runner
 - `pnpm test:agent`: run the API/SDK smoke and contract tests against URL `https://musashi-api.vercel.app`
 - `pnpm test:agent:local`: run the same agent test suite against the local API at `http://127.0.0.1:3000`
-- `pnpm typecheck`: type-check core sources plus Vercel API handlers
+- `pnpm typecheck`: type-check core sources, Vercel API handlers, and test files
+
+## Environment Variables
+
+Copy `.env.example` to `.env.local` for local development. For Vercel deployments:
+
+| Variable | Scope | Description |
+|---|---|---|
+| `SUPABASE_URL` | Production, Preview | Supabase project URL (same as browser client) |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Production only** | Service-role key for server-side archive writes — do **not** enable for Preview or Development |
+| `SUPABASE_ARCHIVE_REQUIRED` | Production | `false` (default) — archive failures are surfaced in metadata but do not fail the cron run. Set to `true` after the first 24 h of clean runs to make archival mandatory and retry the same account batch on failure. |
 
 ## Notes
 

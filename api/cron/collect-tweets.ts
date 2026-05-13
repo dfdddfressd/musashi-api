@@ -11,6 +11,7 @@ import {
   getHighPriorityAccounts,
   getMediumPriorityAccounts,
 } from '../../src/data/twitter-accounts';
+import { archiveAnalyzedTweets } from '../../src/api/analyzed-tweet-archive';
 import type {
   AnalyzedTweet,
   RawTweet,
@@ -106,9 +107,8 @@ export default async function handler(
     const endIndex = Math.min(startIndex + ACCOUNTS_PER_BATCH, allHighPriorityAccounts.length);
     const highPriorityAccounts = allHighPriorityAccounts.slice(startIndex, endIndex);
 
-    // Increment batch for next run (wrap around)
+    // Increment batch for next run (wrap around); saved after archive result is known
     const nextBatch = (currentBatch + 1) % totalBatches;
-    await kv.set(ACCOUNT_ROTATION_KEY, nextBatch);
 
     console.log(`[Cron] Fetching batch ${currentBatch + 1}/${totalBatches} (accounts ${startIndex + 1}-${endIndex} of ${allHighPriorityAccounts.length} high-priority)`);
 
@@ -122,6 +122,7 @@ export default async function handler(
     let totalAnalyzed = 0;
     let totalStored = 0;
     const errors: Array<{ account: string; error: string }> = [];
+    const acceptedTweets: AnalyzedTweet[] = [];
 
     for (const [username, result] of highPriorityResults.entries()) {
       if (result.error) {
@@ -168,16 +169,23 @@ export default async function handler(
           collected_at: new Date().toISOString(),
         };
 
-        // Store tweet in KV
-        await storeTweet(analyzedTweet);
+        acceptedTweets.push(analyzedTweet);
         totalStored++;
       }
     }
 
-    // Step 6: Update feed indices
+    // Step 6: KV writes (hot path) then archive to Supabase
+    for (const tweet of acceptedTweets) {
+      await storeTweet(tweet);
+    }
+
+    const archive = await archiveAnalyzedTweets(acceptedTweets);
+    console.log(`[Cron] archive attempted=${archive.attempted} upserted=${archive.upserted} failed=${archive.failed}`);
+
+    // Step 7: Update feed indices
     await updateFeedIndices();
 
-    // Step 7: Skip medium-priority accounts to avoid rate limits (disabled for now)
+    // Step 8: Skip medium-priority accounts to avoid rate limits (disabled for now)
     // const elapsedTime = Date.now() - startTime;
     // const remainingTime = 55000 - elapsedTime; // 5s buffer before 60s timeout
 
@@ -244,7 +252,7 @@ export default async function handler(
       // }
     }
 
-    // Step 8: Store cron metadata
+    // Step 9: Store cron metadata
     const cronMetadata: CronRunMetadata = {
       timestamp: new Date().toISOString(),
       tweets_collected: totalCollected,
@@ -252,13 +260,27 @@ export default async function handler(
       tweets_stored: totalStored,
       errors,
       duration_ms: Date.now() - startTime,
+      archive,
     };
 
     await setKvWithTtl(CRON_METADATA_KEY, TWEET_TTL_SECONDS, cronMetadata);
 
+    // Advance rotation only when we are not about to request a retry of this batch
+    const archiveRequired = process.env.SUPABASE_ARCHIVE_REQUIRED === 'true';
+    const archiveFailed = archive.failed > 0;
+    if (!archiveRequired || !archiveFailed) {
+      await kv.set(ACCOUNT_ROTATION_KEY, nextBatch);
+    }
+
+    if (archiveRequired && archiveFailed) {
+      console.error(`[Cron] archive_failed: ${archive.failed} of ${archive.attempted} rows failed`);
+      res.status(500).json({ success: false, error: 'archive_failed', metadata: cronMetadata });
+      return;
+    }
+
     console.log(`[Cron] Complete: ${totalStored} tweets stored (${totalCollected} collected, ${totalAnalyzed} analyzed) in ${cronMetadata.duration_ms}ms`);
 
-    // Step 9: Return summary
+    // Step 10: Return summary
     res.status(200).json({
       success: true,
       tweets_collected: totalCollected,

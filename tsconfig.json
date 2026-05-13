@@ -15,6 +15,6 @@
     "strictNullChecks": true,
     "outDir": "./dist"
   },
-  "include": ["src/**/*", "scripts/**/*"],
+  "include": ["src/**/*", "scripts/**/*", "__tests__/**/*"],
   "exclude": ["node_modules", "dist", ".vercel", "src/api/price-tracker.ts"]
 }

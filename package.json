@@ -9,6 +9,7 @@
     "backend:dev": "node server/api-server.mjs",
     "test:agent": "node --import tsx scripts/test-agent-api.ts",
     "test:agent:local": "MUSASHI_API_BASE_URL=http://127.0.0.1:3000 node --import tsx scripts/test-agent-api.ts",
+    "test": "node --import tsx --experimental-test-module-mocks --test '__tests__/**/*.test.ts'",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p api/tsconfig.json",
     "clean": "rm -rf dist .vercel"
   },
@@ -32,6 +33,6 @@
     "typescript": "^5.5.2"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   }
 }

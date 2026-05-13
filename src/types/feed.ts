@@ -132,6 +132,13 @@ export interface AccountsResponse {
 
 // ─── Cron Metadata (stored in KV) ─────────────────────────────────────────
 
+export interface ArchiveResult {
+  attempted: number;
+  upserted: number;
+  failed: number;
+  errors: string[];
+}
+
 export interface CronRunMetadata {
   timestamp: string;
   tweets_collected: number;   // Total tweets fetched from Twitter
@@ -142,6 +149,7 @@ export interface CronRunMetadata {
     error: string;
   }>;
   duration_ms: number;
+  archive?: ArchiveResult;
 }
 
 export interface AccountCursor {
