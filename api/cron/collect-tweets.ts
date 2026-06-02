@@ -6,6 +6,7 @@ import { generateSignal } from '../../src/analysis/signal-generator';
 import { getMarkets, getArbitrage } from '../lib/market-cache';
 import { batchGetFromKV } from '../lib/cache-helper';
 import { kv, listKvKeys, setKvWithTtl } from '../lib/vercel-kv';
+import { kvFeaturesEnabled } from '../lib/kv-feature-guard';
 import {
   TWITTER_ACCOUNTS,
   getHighPriorityAccounts,
@@ -56,6 +57,15 @@ export default async function handler(
     res.status(405).json({
       success: false,
       error: 'Method not allowed. Use GET or POST.',
+    });
+    return;
+  }
+
+  if (!kvFeaturesEnabled()) {
+    res.status(200).json({
+      success: true,
+      message: 'Tweet collection disabled to prevent Upstash costs.',
+      tweets_stored: 0,
     });
     return;
   }

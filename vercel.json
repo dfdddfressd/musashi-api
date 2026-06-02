@@ -72,10 +72,6 @@
   ],
   "crons": [
     {
-      "path": "/api/cron/collect-tweets",
-      "schedule": "*/2 * * * *"
-    },
-    {
       "path": "/api/cron/rollup-daily-metrics",
       "schedule": "5 0 * * *"
     }

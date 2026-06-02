@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import type { AnalyzedTweet, FeedStats, CronRunMetadata, AccountCategory } from '../../src/types/feed';
 import { batchGetFromKV, getCached, setFeedCache, getFeedCache, getFeedCacheTimestamp } from '../lib/cache-helper';
 import { kv } from '../lib/vercel-kv';
+import { kvFeaturesEnabled, sendKvFeatureDisabled } from '../lib/kv-feature-guard';
 
 // ─── KV Storage Keys ───────────────────────────────────────────────────────
 
@@ -70,6 +71,11 @@ export default async function handler(
       success: false,
       error: 'Method not allowed. Use GET.',
     });
+    return;
+  }
+
+  if (!kvFeaturesEnabled()) {
+    sendKvFeatureDisabled(res, 'Feed stats API');
     return;
   }
 

@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Market } from '../../src/types/market';
 import { getMarkets, getMarketMetadata } from '../lib/market-cache';
 import { kv, listKvKeys, setKvWithTtl } from '../lib/vercel-kv';
+import { kvFeaturesEnabled, sendKvFeatureDisabled } from '../lib/kv-feature-guard';
 import { trackApiRequest } from '../lib/analytics';
 
 /**
@@ -218,6 +219,11 @@ export default async function handler(
       success: false,
       error: 'Method not allowed. Use GET.',
     });
+    return;
+  }
+
+  if (!kvFeaturesEnabled()) {
+    sendKvFeatureDisabled(res, 'Market movers API');
     return;
   }
 
