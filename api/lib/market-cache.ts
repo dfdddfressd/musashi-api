@@ -6,6 +6,7 @@
 
 import { Market, ArbitrageOpportunity } from '../../src/types/market';
 import { fetchPolymarkets } from '../../src/api/polymarket-client';
+import { fetchKalshiMarketsFromSupabase } from '../../src/api/kalshi-supabase';
 import { fetchKalshiMarkets } from '../../src/api/kalshi-client';
 import { detectArbitrage } from '../../src/api/arbitrage-detector';
 import { FreshnessMetadata, SourceStatus } from './types';
@@ -96,7 +97,10 @@ export async function getMarkets(): Promise<Market[]> {
         'Polymarket'
       ),
       withTimeout(
-        fetchKalshiMarkets(KALSHI_TARGET_COUNT, KALSHI_MAX_PAGES),
+        fetchKalshiMarketsFromSupabase(KALSHI_TARGET_COUNT).catch((err) => {
+          console.warn('[Market Cache] Supabase Kalshi fetch failed, falling back to live API:', err.message);
+          return fetchKalshiMarkets(KALSHI_TARGET_COUNT, KALSHI_MAX_PAGES);
+        }),
         SOURCE_TIMEOUT_MS,
         'Kalshi'
       ),
