@@ -64,6 +64,7 @@ export async function fetchKalshiMarketsFromSupabase(
       .eq('status', 'open')
       .eq('is_active', true)
       .is('source_missing_at', null)
+      .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
 
     if (error) {

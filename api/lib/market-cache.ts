@@ -71,6 +71,33 @@ function withTimeout<T>(
   return Promise.race([promise, timer]).finally(() => clearTimeout(handle));
 }
 
+//
+// Give Supabase its own timeout. If it rejects for ANY reason — a real
+// error, OR its own timeout expiring — THEN attempt the live API fetch,
+// which gets its own independent timeout budget.
+
+async function fetchKalshiWithFallback(): Promise<Market[]> {
+  try {
+    return await withTimeout(
+      fetchKalshiMarketsFromSupabase(KALSHI_TARGET_COUNT),
+      SOURCE_TIMEOUT_MS,
+      'Kalshi (Supabase)'
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(
+      '[Market Cache] Supabase Kalshi fetch failed or timed out, falling back to live API:',
+      message
+    );
+    return withTimeout(
+      fetchKalshiMarkets(KALSHI_TARGET_COUNT, KALSHI_MAX_PAGES),
+      SOURCE_TIMEOUT_MS,
+      'Kalshi (live API)'
+    );
+  }
+}
+
+
 /**
  * Fetch and cache markets from both platforms
  * Shared across all API endpoints to avoid duplicate fetches
@@ -97,10 +124,7 @@ export async function getMarkets(): Promise<Market[]> {
         'Polymarket'
       ),
       withTimeout(
-        fetchKalshiMarketsFromSupabase(KALSHI_TARGET_COUNT).catch((err) => {
-          console.warn('[Market Cache] Supabase Kalshi fetch failed, falling back to live API:', err.message);
-          return fetchKalshiMarkets(KALSHI_TARGET_COUNT, KALSHI_MAX_PAGES);
-        }),
+        fetchKalshiWithFallback(),
         SOURCE_TIMEOUT_MS,
         'Kalshi'
       ),
