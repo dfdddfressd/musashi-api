@@ -123,11 +123,7 @@ export async function getMarkets(): Promise<Market[]> {
         SOURCE_TIMEOUT_MS,
         'Polymarket'
       ),
-      withTimeout(
-        fetchKalshiWithFallback(),
-        SOURCE_TIMEOUT_MS,
-        'Kalshi'
-      ),
+      fetchKalshiWithFallback(),
     ]);
 
     // Stage 0: Track Polymarket fetch
