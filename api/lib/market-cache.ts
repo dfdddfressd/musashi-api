@@ -10,6 +10,8 @@ import { fetchKalshiMarketsFromSupabase } from '../../src/api/kalshi-supabase';
 import { fetchKalshiMarkets } from '../../src/api/kalshi-client';
 import { detectArbitrage } from '../../src/api/arbitrage-detector';
 import { FreshnessMetadata, SourceStatus } from './types';
+import { fetchPolymarketsFromSupabase } from '../../src/api/polymarket-supabase';
+
 
 // In-memory cache for markets
 // Default: 20 seconds (configurable via MARKET_CACHE_TTL_SECONDS env var)
@@ -97,6 +99,28 @@ async function fetchKalshiWithFallback(): Promise<Market[]> {
   }
 }
 
+async function fetchPolymarketWithFallback(): Promise<Market[]> {
+  try {
+    return await withTimeout(
+      fetchPolymarketsFromSupabase(POLYMARKET_TARGET_COUNT),
+      SOURCE_TIMEOUT_MS,
+      'Polymarket (Supabase)'
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(
+      '[Market Cache] Supabase Polymarket fetch failed or timed out, falling back to live API:',
+      message
+    );
+    return withTimeout(
+      fetchPolymarkets(POLYMARKET_TARGET_COUNT, POLYMARKET_MAX_PAGES),
+      SOURCE_TIMEOUT_MS,
+      'Polymarket (live API)'
+    );
+  }
+}
+
+
 
 /**
  * Fetch and cache markets from both platforms
@@ -118,11 +142,7 @@ export async function getMarkets(): Promise<Market[]> {
   try {
     // Stage 0 Session 2: Wrap each source with 5-second timeout
     const [polyResult, kalshiResult] = await Promise.allSettled([
-      withTimeout(
-        fetchPolymarkets(POLYMARKET_TARGET_COUNT, POLYMARKET_MAX_PAGES),
-        SOURCE_TIMEOUT_MS,
-        'Polymarket'
-      ),
+      fetchPolymarketWithFallback(), 
       fetchKalshiWithFallback(),
     ]);
 
